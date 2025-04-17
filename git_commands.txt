@@ -1,0 +1,12 @@
+# Simple Git Workflow
+
+# Step 1: Add all changes you made
+git add .
+
+# Step 2: Commit your changes with a message
+git commit -m "Your message describing the changes"
+
+# Step 3: Push your changes to GitHub
+git push
+
+# That's it! Your changes are now on GitHub. 
