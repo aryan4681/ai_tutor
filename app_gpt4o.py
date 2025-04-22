@@ -75,6 +75,36 @@ FALLBACK_QUESTIONS = [
     }
 ]
 
+# --- Topic Facts/Truths to Ensure Consistency ---
+TOPIC_FACTS = {
+    "Eigenvalues and Eigenvectors": [
+        "Eigenvectors can be scaled by any nonzero scalar and remain eigenvectors",
+        "Eigenvectors are only defined for square matrices",
+        "Eigenvectors corresponding to distinct eigenvalues are linearly independent",
+        "A matrix with n distinct eigenvalues is diagonalizable"
+    ],
+    "Solving Systems of Linear Equations": [
+        "A system of linear equations can have exactly one solution, infinitely many solutions, or no solution",
+        "A system has no solution if and only if the coefficient matrix is inconsistent",
+        "A system has infinitely many solutions if and only if it is consistent and has free variables",
+        "Row reduction (Gaussian elimination) preserves the solution set of a linear system"
+    ],
+    "Matrix Operations": [
+        "Matrix multiplication is associative: A(BC) = (AB)C",
+        "Matrix multiplication is generally not commutative: AB ≠ BA in most cases",
+        "Matrix addition is commutative and associative",
+        "The transpose of a product is the product of transposes in reverse order: (AB)^T = B^T A^T",
+        "The determinant of a product equals the product of determinants: det(AB) = det(A)·det(B)"
+    ],
+    "Vector Spaces": [
+        "A vector space must be closed under vector addition and scalar multiplication",
+        "The dimension of a vector space is the number of vectors in any basis",
+        "Linearly independent vectors can form a basis if they span the space",
+        "The dimension of the null space plus the dimension of the column space equals the number of columns in the matrix",
+        "The rank of a matrix equals the dimension of its column space or row space"
+    ]
+}
+
 # --- Example Topics (Add more as needed) ---
 # Ensure the demo subject is listed if needed, or adjust AVAILABLE_TOPICS
 AVAILABLE_TOPICS = {
@@ -220,18 +250,31 @@ def generate_questions(topic, num_questions=2, difficulty_level=None):
          # Incorporate the level extracted from the diagnostic category string
          simple_level = difficulty_level.split(" - ")[0] # Get "Beginner", "Intermediate", or "Advanced"
          difficulty_prompt_segment = f"The student is likely at a {simple_level} level. Please tailor the question difficulty appropriately. "
+    
+    # Add topic consistency guidelines if available
+    consistency_guidelines = ""
+    if topic in TOPIC_FACTS:
+        facts = TOPIC_FACTS[topic]
+        facts_text = "\n".join([f"- {fact}" for fact in facts])
+        consistency_guidelines = f"""
+IMPORTANT: Ensure all questions are consistent with these established facts about {topic}:
+{facts_text}
+
+If generating multiple questions on the same concept, ensure they don't contradict each other.
+"""
 
     prompt = (
         f"Generate {num_questions} distinct multiple-choice questions about '{topic}'. "
         f"{difficulty_prompt_segment}" # Add the difficulty instruction here
         f"Each question must have exactly four options. Clearly indicate the single correct answer. "
+        f"{consistency_guidelines}"
         f"Return the result ONLY as a valid JSON list containing {num_questions} objects. "
         f"Each object must have keys: 'question' (string), 'options' (list of 4 strings), and 'correct' (string - the correct option text). "
         f"Ensure the 'correct' value exactly matches one of the strings in the 'options' list."
         f"Do not include any introductory text, explanations, or markdown formatting like ```json."
         f"Just output the raw JSON list."
     )
-    system_msg = "You are an expert JSON generator. Create JSON output according to the user's request precisely."
+    system_msg = "You are an expert JSON generator and mathematics educator. Create JSON output according to the user's request precisely, ensuring mathematical accuracy."
     model_response = query_openai_model(prompt, system_message=system_msg)
 
     if "error" in model_response:
@@ -246,6 +289,10 @@ def generate_questions(topic, num_questions=2, difficulty_level=None):
 
     # --- Validation ---
     valid_questions = []
+    
+    # Track facts asserted by questions to prevent contradictions
+    question_facts = {}
+    
     for i, q in enumerate(generated_questions):
         if (isinstance(q, dict) and
             all(k in q for k in ['question', 'options', 'correct']) and
@@ -254,7 +301,44 @@ def generate_questions(topic, num_questions=2, difficulty_level=None):
             all(isinstance(opt, str) for opt in q['options']) and
             isinstance(q.get('correct'), str) and
             q['correct'] in q['options']):
-            valid_questions.append(q)
+            
+            # Check topic-specific validity
+            question_is_valid = True
+            lower_question = q['question'].lower()
+            correct_answer = q['correct'].lower()
+            
+            # Check if question belongs to a topic with established facts
+            if topic in TOPIC_FACTS:
+                # First, check if this question contradicts any previously established facts
+                for key, value in question_facts.items():
+                    # Look for simple contradictions like "X is true" vs "X is false"
+                    contradiction_found = False
+                    
+                    # Check for common contradictions in linear algebra
+                    if "commutative" in key and "commutative" in correct_answer:
+                        if ("not commutative" in key and "commutative" in correct_answer and "not" not in correct_answer) or \
+                           ("commutative" in key and "not" not in key and "not commutative" in correct_answer):
+                            contradiction_found = True
+                    
+                    # Check for direct contradictions with specific established facts
+                    for fact in TOPIC_FACTS[topic]:
+                        fact_lower = fact.lower()
+                        negated_fact = fact_lower.replace("can", "cannot").replace("is", "is not").replace("are", "are not")
+                        if (fact_lower in correct_answer and negated_fact in key) or \
+                           (negated_fact in correct_answer and fact_lower in key):
+                            contradiction_found = True
+                    
+                    if contradiction_found:
+                        question_is_valid = False
+                        st.warning(f"AI generated question {i+1} contradicts previously established facts for {topic}. Discarding.", icon="⚠️")
+                        break
+                
+                # If the question is still valid, store its facts for future reference
+                if question_is_valid:
+                    question_facts[correct_answer] = True
+            
+            if question_is_valid:
+                valid_questions.append(q)
         else:
              st.warning(f"AI generated question {i+1} has invalid format or answer. Discarding.", icon="⚠️")
 

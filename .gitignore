@@ -41,3 +41,4 @@ env/
 *_backup*
 *test_openai*
 .DS_Store
+*commands.txt*
