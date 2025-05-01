@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import time
 import random # Needed for shuffling options if desired
 import base64 # Needed for image encoding
+import datetime # Needed for spaced repetition scheduling
 
 # --- Page Config MUST be the first Streamlit command ---
 st.set_page_config(layout="wide")
@@ -119,7 +120,6 @@ HIGHLIGHTED_TOPIC = "Solving Systems of Linear Equations" # Topic to visually hi
 AI_PERSONALITIES = {
     "Supportive Tutor (Default)": "You are a supportive, encouraging, and clear math tutor.",
     "Silicon Valley Nerd": "you are a sarcastic, slightly jaded, 'too-cool-for-school' silicon valley nerd explaining math. you always respond in lowercase, never use capitalization. you often use tech jargon ironically or out of context (e.g., 'synergize the coefficients', 'bandwidth issue with factoring'). you are helpful, but in a reluctant, eye-rolling kind of way, yet ultimately provide the correct explanation concisely.",
-    "Unhinged": "You are an UNHINGED math tutor with absolutely zero filter. Your explanations are correct but delivered with brutal honesty and sarcasm. Roast the student's mistakes mercilessly. You're like a combination of a stand-up comedian and a math genius having a manic episode. You're simultaneously brilliant and chaotic. Talk like a silicon valley nerd, throw in some famous contextual hostorical figures, also current event jokes and references."
 }
 DEFAULT_PERSONALITY = "Supportive Tutor (Default)"
 # ----------------------------------------
@@ -432,28 +432,17 @@ def get_help(question, help_request, personality_name=DEFAULT_PERSONALITY):
     """Gets help related to the current question using the AI model, adapting to personality."""
     system_msg = AI_PERSONALITIES.get(personality_name, AI_PERSONALITIES[DEFAULT_PERSONALITY])
     prompt = (
-        f"A student needs help with a math question or concept. They're currently working on this question:\n"
+        f"A student needs help with a math question or concept. Here's the question they asked:\n"
         f"Question: {question['question']}\n"
-        f"Options: {question['options']}\n\n"
-        f"Their specific request is: '{help_request}'\n\n"
-        "Provide a helpful and comprehensive explanation that addresses their request. They might be asking about:"
-        "- The specific question they're working on"
-        "- A general math concept related to the question"
-        "- A different topic in the same subject area"
-        "- How to approach similar problems"
-        "\n\n"
-        "Give a thorough explanation (around 150-300 words) that helps them understand the concept deeply. "
-        "If they're asking about the specific question, you can provide guidance and explanation, but avoid directly stating 'the answer is X' for multiple-choice questions."
-        "If they're asking about something unrelated to the current question, feel free to address their actual request."
-        "Adhere to the persona defined in the system message."
-        "\n\n"
-        "IMPORTANT FORMATTING INSTRUCTION: When using ANY mathematical notation (variables, equations, formulas, matrices, etc.), "
-        "always enclose it in single dollar signs for proper rendering. For example:"
-        "- Write $x^2$ not x^2"
-        "- Write $\\frac{1}{2}$ not \\frac{1}{2}"
-        "- Write $\\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}$ not \\begin{bmatrix} a & b \\\\ c & d \\end{bmatrix}"
-        "- Write $y = mx + b$ not y = mx + b"
-        "This is CRITICAL for proper display of mathematics in the user interface."
+        f"Options: {question.get('options', 'N/A')}\n\n"
+        f"The student requested: '{help_request}'\n\n"
+        "Follow the student's request regarding format, style, or length exactly when crafting your response. "
+        "Provide an explanation that addresses their specific question or concept. "
+        "If they ask for a one-line explanation, be concise in one line. "
+        "If they ask for more detail, provide thorough guidance. "
+        "Avoid unnecessary verbosity or deviation from the student's instructions. "
+        "Adhere to the persona defined in the system message.\n\n"
+        "IMPORTANT FORMATTING: Enclose mathematical notation in single dollar signs (e.g., write $x^2$)."
     )
     model_response = query_openai_model(prompt, system_message=system_msg)
     if "error" in model_response or not model_response.get("generated_text"):
@@ -564,6 +553,8 @@ def display_question_ui(question_state, question_obj, question_index, mode_prefi
     step_solution_key = f"{mode_prefix}_step_solution_{question_index}" # For step-by-step
     upload_key = f"{mode_prefix}_upload_{question_index}" # For file uploads (open text)
     upload_data_key = f"{mode_prefix}_upload_data_{question_index}" # To store file bytes/info
+    # Key for storing chat history for this question
+    help_history_key = f"{mode_prefix}_help_history_{question_index}"
 
 
     # Initialize state if needed
@@ -736,7 +727,28 @@ def display_question_ui(question_state, question_obj, question_index, mode_prefi
             if fb_q_type == "mcq":
                 correct = last_feedback['user_answer'] == last_feedback['correct_answer']
                 if correct: st.success(f"{last_feedback['evaluation']}", icon="✅")
-                else: st.error(f"{last_feedback['evaluation']}", icon="❌"); st.info(f"Correct Answer: **{last_feedback['correct_answer']}**", icon="💡")
+                else: 
+                    st.error(f"{last_feedback['evaluation']}", icon="❌")
+                    st.info(f"Correct Answer: **{last_feedback['correct_answer']}**", icon="💡")
+                    
+                    # Add flashcard option for incorrect MCQ answers
+                    question_text = q['question']
+                    is_already_flashcard = any(card['question'] == question_text for card in st.session_state.flashcards)
+                    
+                    if not is_already_flashcard:
+                        if st.button("Add to Flashcards", key=f"{mode_prefix}_add_flashcard_{question_index}"):
+                            # Create flashcard from this question
+                            create_flashcard(
+                                question=question_text,
+                                correct_answer=last_feedback['correct_answer'],
+                                user_answer=last_feedback['user_answer'],
+                                explanation=last_feedback['evaluation'],
+                                topic=question_state.get('topic'),
+                                subject=st.session_state.selected_subject
+                            )
+                            st.success("Added to flashcards! This will help you remember it next time.")
+                    else:
+                        st.caption("Already in your flashcards")
             else: # Open question - use info box for qualitative feedback
                 st.info(f"{last_feedback['evaluation']}", icon="📝")
         else:
@@ -750,41 +762,44 @@ def display_question_ui(question_state, question_obj, question_index, mode_prefi
              # No step-by-step or final answer buttons for open questions
              pass
 
-        # Help Section logic (Common for both)
+        # Help Chat Interface
         st.divider()
-        if st.button("Ask for help", key=f"{mode_prefix}_help_btn_{question_index}"):
-             question_state[help_visible_key] = not question_state[help_visible_key]
-             question_state[help_text_key] = "" # Clear old help
-        if question_state[help_visible_key]:
-            question_state[help_input_key] = st.text_area(
-                 "What specific part of this question or solution do you need help with?",
-                 key=f"{mode_prefix}_help_ta_{question_index}",
-                 value=question_state.get(help_input_key, "")
-                 )
-            if st.button("↑", key=f"{mode_prefix}_help_submit_{question_index}"):
-                 if question_state[help_input_key].strip():
-                     with st.spinner("Asking the assistant for help..."):
-                          # Pass the original question object 'q'
-                          # Pass personality to get_help
-                          question_state[help_text_key] = get_help(q, question_state[help_input_key], selected_personality)
-                     st.rerun() # Display hint
-                 else:
-                      st.warning("Please type your help request first.", icon="✍️")
-
-            if question_state[help_text_key]:
-                 # Use st.markdown with HTML/MathJax processing enabled
-                 st.markdown(f"""
-                 <div class="math-container">
-                 <strong>Help:</strong><br>
-                 {question_state[help_text_key]}
-                 </div>
-                 """, unsafe_allow_html=True)
-                 if st.button("Clear", key=f"{mode_prefix}_clear_hint_{question_index}"):
-                      question_state[help_text_key] = ""
-                      question_state[help_input_key] = ""
-                      question_state[help_visible_key] = False
-                      st.rerun()
-
+        st.subheader("Help Chat")
+        # Initialize chat history list
+        if help_history_key not in question_state:
+            question_state[help_history_key] = []
+        # Display chat history
+        for entry in question_state[help_history_key]:
+            if entry['role'] == 'user':
+                st.markdown(f"**You:** {entry['text']}")
+            else:
+                st.markdown(f"**Tutor:** {entry['text']}")
+        # Key to trigger clearing the input before widget instantiation
+        help_clear_key = f"{mode_prefix}_help_clear_{question_index}"
+        clear_widget_key = f"{mode_prefix}_help_input_{question_index}"
+        # If flagged, reset the widget's session_state value before rendering
+        if help_clear_key in question_state and question_state[help_clear_key]:
+            st.session_state[clear_widget_key] = ""
+            question_state[help_clear_key] = False
+        # Input for new help message
+        user_query = st.text_input(
+            "Ask me about a step, an option, or a concept",
+            key=clear_widget_key,
+            placeholder="Type your question here..."
+        )
+        if st.button("Send", key=f"{mode_prefix}_help_send_{question_index}"):
+            if user_query and user_query.strip():
+                # Append user message to history
+                question_state[help_history_key].append({'role': 'user', 'text': user_query})
+                # Get tutor reply
+                with st.spinner("Thinking..."):
+                    assistant_response = get_help(q, user_query, selected_personality)
+                question_state[help_history_key].append({'role': 'assistant', 'text': assistant_response})
+                # Flag input to clear before next render
+                question_state[help_clear_key] = True
+                st.rerun()
+            else:
+                st.warning("Please enter a question.", icon="✍️")
 
         # Next/Finish Buttons logic
         st.divider()
@@ -1302,6 +1317,22 @@ def main():
     if 'completed_activities' not in st.session_state:
         st.session_state.completed_activities = []
     
+    # Initialize flashcard system
+    if 'flashcards' not in st.session_state:
+        st.session_state.flashcards = []
+    if 'next_review_dates' not in st.session_state:
+        st.session_state.next_review_dates = {}
+    if 'flashcard_stats' not in st.session_state:
+        st.session_state.flashcard_stats = {
+            'total_cards': 0,
+            'due_today': 0,
+            'mastered': 0
+        }
+    
+    # --- Add state for flashcard creation form visibility ---
+    if 'show_create_flashcard_form' not in st.session_state:
+        st.session_state.show_create_flashcard_form = False
+        
     # Check and update streak based on today's date
     today = time.strftime("%Y-%m-%d")
     if st.session_state.last_activity_date != today:
@@ -1432,13 +1463,23 @@ def main():
             elif subject_chosen != COMPREHENSIVE_SUBJECT:
                  st.sidebar.info(f"Exam only available for {COMPREHENSIVE_SUBJECT}.")
     
-    # --- Bookmarked Questions Button (always at the end) ---
+    # --- Bookmarked Questions Button ---
     st.sidebar.divider()
     st.sidebar.subheader("Saved Questions")
     bookmark_count = len(st.session_state.bookmarked_questions)
     bookmark_label = f"Bookmarked Questions ({bookmark_count})" if bookmark_count > 0 else "Bookmarked Questions"
     if st.sidebar.button(bookmark_label, use_container_width=True, key="view_bookmarks_btn"):
         st.session_state.app_state = 'bookmarks'
+        st.rerun()
+        
+    # --- Flashcards Button ---
+    st.sidebar.divider()
+    st.sidebar.subheader("Flashcards")
+    due_count = st.session_state.flashcard_stats.get('due_today', 0)
+    total_count = st.session_state.flashcard_stats.get('total_cards', 0)
+    flashcard_label = f"Review Flashcards ({due_count} due)" if due_count > 0 else f"Flashcards ({total_count})"
+    if st.sidebar.button(flashcard_label, use_container_width=True, key="view_flashcards_btn"):
+        st.session_state.app_state = 'flashcards'
         st.rerun()
     # --- End of Sidebar Logic ---
 
@@ -1654,6 +1695,207 @@ def main():
                         
                     st.markdown("---")
     
+    # --- Flashcard Review State ---
+    elif st.session_state.app_state == 'flashcards':
+        st.header("Flashcard Review")
+        
+        # --- Always refresh the list of due cards when entering this state ---
+        st.session_state.current_flashcards = get_due_flashcards()
+        random.shuffle(st.session_state.current_flashcards)
+        
+        # Initialize or reset review index if necessary
+        if 'current_flashcard_index' not in st.session_state or st.session_state.current_flashcard_index >= len(st.session_state.current_flashcards):
+            st.session_state.current_flashcard_index = 0 
+            
+        if 'show_answer' not in st.session_state:
+            st.session_state.show_answer = False
+        # Always reset show_answer if index is 0 (likely means list was refreshed or review restarted)
+        elif st.session_state.current_flashcard_index == 0:
+             st.session_state.show_answer = False
+            
+        # Display flashcard stats (ensure due_today count is accurate)
+        total_cards = st.session_state.flashcard_stats.get('total_cards', 0)
+        st.session_state.flashcard_stats['due_today'] = len(st.session_state.current_flashcards) # Use the length of the fetched list
+        due_today = st.session_state.flashcard_stats['due_today']
+        mastered = st.session_state.flashcard_stats.get('mastered', 0)
+        
+        # Show stats in a more compact format
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Cards", total_cards)
+        with col2: 
+            st.metric("Due Today", due_today)
+        with col3:
+            st.metric("Mastered", mastered)
+            
+        st.divider()
+        
+        # --- Button to toggle custom flashcard creation form ---
+        if not st.session_state.show_create_flashcard_form:
+            if st.button("➕ Create New Flashcard", key="toggle_create_card_form"):
+                st.session_state.show_create_flashcard_form = True
+                st.rerun()
+        
+        # --- Custom Flashcard Creation Form ---
+        if st.session_state.show_create_flashcard_form:
+            with st.form("new_flashcard_form"): 
+                st.subheader("Create a New Flashcard")
+                new_question = st.text_input("Question", key="new_q_input")
+                new_answer = st.text_area("Answer", key="new_a_input", height=100)
+                
+                # Optional subject/topic selection (can be enhanced later)
+                current_subject = st.session_state.get('selected_subject')
+                current_topic = st.session_state.get('selected_topic')
+                st.caption(f"Subject: {current_subject or 'General'} / Topic: {current_topic or 'General'}")
+                
+                # Form buttons
+                submitted = st.form_submit_button("Save Flashcard")
+                cancelled = st.form_submit_button("Cancel")
+                
+                if submitted:
+                    if new_question and new_answer:
+                        create_flashcard(
+                            question=new_question,
+                            correct_answer=new_answer,
+                            subject=current_subject,
+                            topic=current_topic
+                        )
+                        st.success("Flashcard created successfully!")
+                        st.session_state.show_create_flashcard_form = False
+                        # Refresh the due list in case the user wants to review immediately
+                        st.session_state.current_flashcards = get_due_flashcards()
+                        random.shuffle(st.session_state.current_flashcards)
+                        st.session_state.current_flashcard_index = 0 # Reset index to potentially show new card
+                        st.rerun()
+                    else:
+                        st.warning("Please enter both a question and an answer.")
+                
+                if cancelled:
+                    st.session_state.show_create_flashcard_form = False
+                    st.rerun()
+            st.divider()
+
+        # --- Flashcard Review Section ---
+        if not st.session_state.show_create_flashcard_form:
+            st.subheader("Due Today") # Add subheader for clarity
+            # Check if we have cards to review
+            if not st.session_state.current_flashcards:
+                st.info("👍 You have no flashcards due for review today!")
+            else:
+                # We have cards to review - show the current one
+                current_index = st.session_state.current_flashcard_index
+                if current_index < len(st.session_state.current_flashcards):
+                    card = st.session_state.current_flashcards[current_index]
+                    # Display card info
+                    with st.container(border=True):
+                        # Show topic/subject as caption
+                        if card.get('topic') or card.get('subject'):
+                            topic_str = card.get('topic', '')
+                            subj_str = card.get('subject', '')
+                            caption = f"{subj_str} • {topic_str}" if topic_str and subj_str else (topic_str or subj_str)
+                            st.caption(caption)
+                        
+                        # Display the question
+                        st.subheader(f"Reviewing: {current_index + 1} of {len(st.session_state.current_flashcards)} Due")
+                        st.markdown(f"<div style='font-size: 1.3em; margin-bottom: 20px;'>{card['question']}</div>", 
+                                   unsafe_allow_html=True)
+                        
+                        # Show incorrect answer if available
+                        if not st.session_state.show_answer and card.get('user_answer'):
+                            st.caption(f"Your previous answer: {card['user_answer']}")
+                        
+                        # Show/hide answer button using per-card session state
+                        show_key = f"show_answer_{card['id']}"
+                        if show_key not in st.session_state:
+                            st.session_state[show_key] = False
+                        # Button toggles reveal
+                        if not st.session_state[show_key]:
+                            if st.button("Show Answer", key=f"show_answer_btn_{card['id']}", use_container_width=True):
+                                st.session_state[show_key] = True
+                                st.rerun()
+                        else:
+                            # Display the answer and explanation
+                            st.markdown("<hr>", unsafe_allow_html=True)
+                            st.markdown("**Answer:**")
+                            st.write(card['answer'])
+                            if card.get('explanation') and card['explanation'] != "No explanation provided":
+                                st.markdown(f"<div style='font-style: italic;'>Explanation: {card['explanation']}</div>", unsafe_allow_html=True)
+                            # Rating buttons
+                            st.write("How well did you know this?")
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                if st.button("Hard", key="rating_hard", use_container_width=True):
+                                    calculate_next_review(card['id'], 1); next_card(); st.rerun()
+                            with col2:
+                                if st.button("Medium", key="rating_medium", use_container_width=True):
+                                    calculate_next_review(card['id'], 2); next_card(); st.rerun()
+                            with col3:
+                                if st.button("Easy", key="rating_easy", use_container_width=True):
+                                    calculate_next_review(card['id'], 3); next_card(); st.rerun()
+                            with col4:
+                                if st.button("Very Easy", key="rating_very_easy", use_container_width=True):
+                                    calculate_next_review(card['id'], 4); next_card(); st.rerun()
+                else:
+                    # Finished all cards for today
+                    st.success("🎉 You've completed all your due flashcards for today!")
+            
+            st.divider()
+            
+            # --- Browse All Flashcards Section ---
+            st.subheader("All Flashcards")
+            all_flashcards = st.session_state.get('flashcards', [])
+            
+            if not all_flashcards:
+                st.info("You haven't created any flashcards yet.")
+            else:
+                # Simple search/filter (optional, can be added later)
+                # search_term = st.text_input("Search Flashcards", key="fc_search")
+                # filtered_cards = [c for c in all_flashcards if search_term.lower() in c['question'].lower() or search_term.lower() in c['answer'].lower()] if search_term else all_flashcards
+                
+                # Display cards in expanders
+                for i, card_data in enumerate(all_flashcards):
+                    card_id = card_data['id']
+                    next_review_info = st.session_state.next_review_dates.get(card_id, {})
+                    next_review_date = next_review_info.get('next_review', 'N/A')
+                    is_mastered = next_review_info.get('mastered', False)
+                    
+                    label_prefix = "✅ Mastered: " if is_mastered else f"🗓️ Due {next_review_date}: " 
+                    expander_label = f"{label_prefix}{card_data['question'][:60]}{'...' if len(card_data['question']) > 60 else ''}"
+                    
+                    with st.expander(expander_label):
+                        st.markdown(f"**Question:** {card_data['question']}")
+                        # Display answer using native Streamlit
+                        st.markdown("**Answer:**")
+                        st.write(card_data['answer'])
+                        if card_data.get('explanation') and card_data['explanation'] != "No explanation provided":
+                            st.markdown(f"_Explanation:_ {card_data['explanation']}")
+                        st.caption(f"Subject: {card_data.get('subject', 'N/A')} | Topic: {card_data.get('topic', 'N/A')} | Created: {card_data.get('created_date', 'N/A')}")
+                        st.caption(f"Next Review: {next_review_date} | Reviews: {next_review_info.get('reviews', 0)} | Mastered: {is_mastered}")
+                        
+                        # Option to delete flashcard
+                        if st.button("Delete Card", key=f"delete_fc_{card_id}", type="secondary"):
+                            # Remove from main list
+                            st.session_state.flashcards = [c for c in st.session_state.flashcards if c['id'] != card_id]
+                            # Remove from review schedule
+                            if card_id in st.session_state.next_review_dates:
+                                del st.session_state.next_review_dates[card_id]
+                            # Update stats
+                            st.session_state.flashcard_stats['total_cards'] = len(st.session_state.flashcards)
+                            st.success(f"Flashcard deleted.")
+                            # Refresh the view
+                            st.rerun()
+                            
+            # Button to go back
+            if st.button("Return to Dashboard", key="fc_back_btn"):
+                st.session_state.app_state = 'welcome'
+                # Clear flashcard session state
+                if 'current_flashcard_index' in st.session_state: del st.session_state['current_flashcard_index']
+                if 'current_flashcards' in st.session_state: del st.session_state['current_flashcards']
+                if 'show_answer' in st.session_state: del st.session_state['show_answer']
+                if 'show_create_flashcard_form' in st.session_state: del st.session_state['show_create_flashcard_form']
+                st.rerun()
+
     # Fallback State
     else:
         st.warning("An unexpected application state occurred.")
@@ -1765,7 +2007,8 @@ def display_stats():
 def award_points(activity, question_correct=False):
     """
     Award points for different activities.
-    Activities: 'complete_question', 'complete_diagnostic', 'complete_practice', 'complete_exam', 'create_plan', 'bookmark'
+    Activities: 'complete_question', 'complete_diagnostic', 'complete_practice', 'complete_exam', 
+                'create_plan', 'bookmark', 'create_flashcard', 'review_flashcard', 'master_flashcard'
     """
     points_map = {
         'complete_question': 5,  # Base points for attempting a question
@@ -1774,7 +2017,10 @@ def award_points(activity, question_correct=False):
         'complete_practice': 20,
         'complete_exam': 50,
         'create_plan': 15,
-        'bookmark': 2
+        'bookmark': 2,
+        'create_flashcard': 3,    # New: Creating a flashcard
+        'review_flashcard': 1,    # New: Reviewing a flashcard
+        'master_flashcard': 5     # New: Mastering a flashcard
     }
     
     # Award base points for the activity
@@ -1794,6 +2040,124 @@ def award_points(activity, question_correct=False):
         return activity_id
     
     return None
+
+# --- Functions for flashcard system ---
+def calculate_next_review(card_id, difficulty):
+    """
+    Calculate the next review date based on spaced repetition principles.
+    
+    Difficulty levels:
+    1 - Hard (review tomorrow)
+    2 - Medium (review in 3 days)
+    3 - Easy (review in 7 days)
+    4 - Very Easy (review in 14 days, considered mastered)
+    """
+    today = datetime.datetime.now().date()
+    
+    # Get the current interval (days since last review or default to 0)
+    current_interval = 0
+    if card_id in st.session_state.next_review_dates:
+        last_date = st.session_state.next_review_dates[card_id].get('last_review_date')
+        if last_date:
+            last_date = datetime.datetime.strptime(last_date, '%Y-%m-%d').date()
+            current_interval = (today - last_date).days
+    
+    # Calculate new interval based on difficulty
+    if difficulty == 1:  # Hard
+        new_interval = 1
+    elif difficulty == 2:  # Medium
+        new_interval = max(3, int(current_interval * 1.5))
+    elif difficulty == 3:  # Easy
+        new_interval = max(7, int(current_interval * 2))
+    else:  # Very Easy (4)
+        new_interval = max(14, int(current_interval * 2.5))
+    
+    next_date = today + datetime.timedelta(days=new_interval)
+    
+    # Update the flashcard data
+    st.session_state.next_review_dates[card_id] = {
+        'next_review': next_date.strftime('%Y-%m-%d'),
+        'last_review_date': today.strftime('%Y-%m-%d'),
+        'difficulty': difficulty,
+        'interval': new_interval,
+        'reviews': st.session_state.next_review_dates.get(card_id, {}).get('reviews', 0) + 1
+    }
+    
+    # Award points for reviewing a card
+    award_points('review_flashcard')
+    
+    # Mark as mastered if difficulty is 4 (very easy) and interval is at least 14 days
+    is_mastered = difficulty == 4 and new_interval >= 14
+    if is_mastered and not st.session_state.next_review_dates.get(card_id, {}).get('mastered', False):
+        st.session_state.next_review_dates[card_id]['mastered'] = True
+        st.session_state.flashcard_stats['mastered'] += 1
+        award_points('master_flashcard')
+    
+    return next_date.strftime('%Y-%m-%d')
+
+def create_flashcard(question, correct_answer, user_answer=None, explanation=None, topic=None, subject=None):
+    """Create a new flashcard and add it to the collection, making it due today."""
+    # Generate a unique ID for the card
+    card_id = f"card_{int(time.time())}_{random.randint(1000, 9999)}"
+    
+    # Create the card
+    card = {
+        'id': card_id,
+        'question': question,
+        'answer': correct_answer,
+        'user_answer': user_answer,
+        'explanation': explanation or "No explanation provided",
+        'topic': topic,
+        'subject': subject,
+        'created_date': datetime.datetime.now().strftime('%Y-%m-%d'),
+    }
+    
+    # Add to session state
+    st.session_state.flashcards.append(card)
+    
+    # Set initial review date for TODAY
+    today_str = datetime.datetime.now().strftime('%Y-%m-%d')
+    st.session_state.next_review_dates[card_id] = {
+        'next_review': today_str,         # Due today!
+        'last_review_date': today_str,   # Mark as "reviewed" today initially
+        'difficulty': 1,                # Start as Hard
+        'interval': 0,                  # Initial interval
+        'reviews': 0                    # No reviews yet
+    }
+    
+    # Update stats
+    st.session_state.flashcard_stats['total_cards'] += 1
+    # Since it's due today, increment the due count
+    st.session_state.flashcard_stats['due_today'] = len(get_due_flashcards()) # Recalculate based on current due cards
+    
+    # Award points for creating a flashcard
+    award_points('create_flashcard')
+    
+    return card_id
+
+def get_due_flashcards():
+    """Get all flashcards due for review today"""
+    today = datetime.datetime.now().date().strftime('%Y-%m-%d')
+    due_cards = []
+    
+    for card in st.session_state.flashcards:
+        card_id = card['id']
+        if card_id in st.session_state.next_review_dates:
+            next_review = st.session_state.next_review_dates[card_id].get('next_review')
+            # Card is due if next_review date is today or earlier
+            if next_review and next_review <= today:
+                due_cards.append(card)
+    
+    # Update stats
+    st.session_state.flashcard_stats['due_today'] = len(due_cards)
+    
+    return due_cards
+
+def next_card():
+    """Move to the next flashcard"""
+    if 'current_flashcard_index' in st.session_state:
+        st.session_state.current_flashcard_index += 1
+        st.session_state.show_answer = False
 
 if __name__ == "__main__":
     main()
