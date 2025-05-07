@@ -193,7 +193,7 @@ def query_openai_model(prompt, system_message="You are a helpful AI assistant sp
             messages=messages,
             temperature=0.7,
             top_p=0.9,
-            max_tokens=500 # Increase max_tokens if expecting longer feedback
+            max_tokens=1000 # Increased to support longer study plans and detailed output
         )
         # print("DEBUG: OpenAI Response:", response) # Debugging
         return {"generated_text": response.choices[0].message.content}
@@ -1918,8 +1918,8 @@ def generate_study_plan(subject, days, hours_per_day, goals=""):
         This is a sample study plan. To get a personalized plan, please set up your OpenAI API key.
         
         ## Week 1
-        * **Day 1-2:** Review basic concepts using the Practice mode
-        * **Day 3-5:** Take diagnostic tests
+        * **Day 1-2:** Review basic concepts using the Practice mode (1 hour, 5 questions)
+        * **Day 3-5:** Take diagnostic tests (1.5 hours, 10 questions)
         """
     
     topics = AVAILABLE_TOPICS.get(subject, [])
@@ -1934,23 +1934,27 @@ def generate_study_plan(subject, days, hours_per_day, goals=""):
     Additional notes from the student: {goals}
     
     IMPORTANT GUIDELINES:
-    1. Keep the plan BRIEF and FOCUSED - maximum 500 words total
+    1. Keep the plan BRIEF and FOCUSED - maximum 1000 words total
     2. Focus ONLY on using features of THIS TOOL (Diagnostic Test, Practice Mode, Comprehensive Exam)
     3. DO NOT recommend external resources like books, videos, or lecture notes
     4. Organize by days with clear topic focus for each day
     5. Include specific topics to study each day
-    6. Keep language simple and direct - no unnecessary explanations
+    6. INCLUDE SPECIFIC DETAILS about:
+       - How much time to spend on each activity (in hours/minutes)
+       - How many questions to practice in each session (be specific)
+       - How to divide the {hours_per_day} daily hours between different activities
+    7. Keep language simple and direct - no unnecessary explanations
     
     Format as a short, clear markdown document:
     - Use # for main headings (Week 1, etc.)
     - Use ## for day headings (Day 1, etc.)
-    - Use bullet points (*) for activities
+    - Use bullet points (*) for activities with TIME and NUMBER OF QUESTIONS specified
     - Be extremely concise - this is a quick reference, not a detailed guide
     
     DO NOT USE HTML. Only use simple markdown that displays properly in Streamlit.
     """
     
-    system_msg = "You are a concise study planner who creates brief, focused study schedules. Create short, clear plans with NO fluff, focusing only on using the AI Math Tutor's features (Diagnostic, Practice, Comprehensive Exam)."
+    system_msg = "You are a concise study planner who creates brief, focused study schedules. Create short, clear plans with NO fluff, focusing only on using the AI Math Tutor's features (Diagnostic, Practice, Comprehensive Exam). Always include specific time allocations and number of practice questions in your recommendations."
     
     model_response = query_openai_model(prompt, system_message=system_msg)
     
