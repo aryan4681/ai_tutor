@@ -106,6 +106,19 @@ TOPIC_FACTS = {
     ]
 }
 
+# --- Intended Learning Outcomes (ILOs) ---
+TOPIC_ILOS = {
+    "Solving Systems of Linear Equations": [
+        "Solve a linear system of equations using row reduction (with and without parameters).",
+        "Interpret a linear system geometrically.",
+        "Reason about existence and uniqueness of a solution of a linear system (using pivot positions, echelon forms, linear independence, etc.).",
+        "Determine if a vector is a linear combination of a set of predefined vectors.",
+        "Determine if a vector is in the span of a set of predefined vectors.",
+        "Determine if a set of vectors is linearly independent.",
+        "Understand that 'solve a linear system' can be phrased in many different ways, e.g., 'is this system consistent?' or 'is this vector in this plane?' or 'are these vector linearly independent?' or 'is this vector a linear combination of these other vectors?' etc."
+    ]
+}
+
 # --- Example Topics (Add more as needed) ---
 # Ensure the demo subject is listed if needed, or adjust AVAILABLE_TOPICS
 AVAILABLE_TOPICS = {
@@ -268,6 +281,20 @@ If generating multiple questions on the same concept, ensure they don't contradi
         f"{difficulty_prompt_segment}" # Add the difficulty instruction here
         f"Each question must have exactly four options. Clearly indicate the single correct answer. "
         f"{consistency_guidelines}"
+    )
+    
+    # --- Add ILOs to prompt if available for the topic ---
+    if topic in TOPIC_ILOS:
+        ilos = TOPIC_ILOS[topic]
+        ilos_text = "\n".join([f"- {ilo}" for ilo in ilos])
+        prompt += f"""
+Consider the following Intended Learning Outcomes (ILOs) when generating questions for '{topic}':
+{ilos_text}
+Ensure questions align with and test understanding of these objectives.
+"""
+    # --- End ILOs ---
+        
+    prompt += (
         f"Return the result ONLY as a valid JSON list containing {num_questions} objects. "
         f"Each object must have keys: 'question' (string), 'options' (list of 4 strings), and 'correct' (string - the correct option text). "
         f"Ensure the 'correct' value exactly matches one of the strings in the 'options' list."
