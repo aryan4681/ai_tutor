@@ -165,6 +165,28 @@ else:
 
 # --- Helper Functions ---
 
+def get_youtube_video_id_for_embed(url: str) -> str | None:
+    """
+    Extracts the YouTube video ID from various URL formats.
+    Returns the video ID, or None if extraction fails.
+    """
+    video_id = None
+    # Standard youtube.com/watch?v=VIDEO_ID
+    match = re.search(r"youtube\.com/watch\?v=([^&\\#]+)", url)
+    if match:
+        video_id = match.group(1)
+    else:
+        # Shortened youtu.be/VIDEO_ID
+        match = re.search(r"youtu\.be/([^&\\#\\?]+)", url)
+        if match:
+            video_id = match.group(1)
+        else:
+            # Embed URLs youtube.com/embed/VIDEO_ID
+            match = re.search(r"youtube\.com/embed/([^&\\#\\?]+)", url)
+            if match:
+                video_id = match.group(1)
+    return video_id
+
 # Updated to potentially handle multimodal input (text + image)
 def query_openai_model(prompt, system_message="You are a helpful AI assistant specializing in math education.", image_bytes=None, image_media_type="image/jpeg"):
     """Sends a prompt to the configured OpenAI model, potentially including image data."""
@@ -778,6 +800,59 @@ def display_question_ui(question_state, question_obj, question_index, mode_prefi
                         st.caption("Already in your flashcards")
             else: # Open question - use info box for qualitative feedback
                 st.info(f"{last_feedback['evaluation']}", icon="📝")
+
+            # --- Display 3Blue1Brown Video Links ---
+            # Placed here to show after feedback for the current question
+            current_subject_for_video = st.session_state.get("selected_subject")
+            current_topic_for_video = None
+
+            # Determine the topic based on the mode
+            # For comprehensive ('c'), try to get topic from the question object itself
+            # For diagnostic ('d') or practice ('p'), get topic from question_state
+            if mode_prefix == 'c':
+                current_topic_for_video = q.get('topic') # Assumes 'topic' key in question_obj for comprehensive
+            else:
+                current_topic_for_video = question_state.get("topic")
+
+            if current_subject_for_video and current_topic_for_video:
+                if current_subject_for_video in THREE_BLUE_ONE_BROWN_LINKS and \
+                   current_topic_for_video in THREE_BLUE_ONE_BROWN_LINKS[current_subject_for_video]:
+                    
+                    video_links_for_topic = THREE_BLUE_ONE_BROWN_LINKS[current_subject_for_video][current_topic_for_video]
+                    
+                    if video_links_for_topic:
+                        st.markdown("---")
+                        st.subheader("Dive Deeper with 3Blue1Brown")
+                        
+                        # Ensure video_links_for_topic is a list for iteration
+                        if isinstance(video_links_for_topic, str):
+                            video_links_for_topic = [video_links_for_topic]
+                        
+                        for video_url in video_links_for_topic:
+                            video_id = get_youtube_video_id_for_embed(video_url)
+                            if video_id:
+                                embed_width = 360
+                                embed_height = 203 # Approx 16:9 for 360 width
+                                # Note: ''' in f-string for HTML content needs to be escaped as \'\'\' if it were part of the HTML itself.
+                                # Here, it's fine as it's just the f-string delimiter.
+                                embed_html = f'''
+                                    <div style="margin-bottom: 10px;"> <!-- Add some space between videos -->
+                                        <iframe 
+                                            width="{embed_width}" 
+                                            height="{embed_height}" 
+                                            src="https://www.youtube.com/embed/{video_id}" 
+                                            frameborder="0" 
+                                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                                            allowfullscreen>
+                                        </iframe>
+                                    </div>
+                                '''
+                                st.markdown(embed_html, unsafe_allow_html=True)
+                            else:
+                                # Fallback to just showing the link if ID extraction fails or if it's not a YouTube link
+                                st.markdown(f"Watch: [{video_url}]({video_url})")
+            # --- End 3Blue1Brown Video Links ---
+            
         else:
              st.warning("Could not retrieve feedback for this question index.", icon="🤔")
 
@@ -1015,11 +1090,35 @@ def run_mode(mode_key):
                                if q_type == "mcq":
                                    correct = fb['user_answer'] == fb['correct_answer']
                                    if correct: st.success(f"{fb['evaluation']}", icon="✅")
-                                   else: st.error(f"{fb['evaluation']}", icon="❌"); st.info(f"Correct Answer: **{fb['correct_answer']}**", icon="💡")
-                               else: # Open Text
-                                   st.info(f"{fb['evaluation']}", icon="📝")
+                                   else: 
+                                       st.error(f"{fb['evaluation']}", icon="❌")
+                                       st.info(f"Correct Answer: **{fb['correct_answer']}**", icon="💡")
+                                       
+                                       # Add flashcard option for incorrect MCQ answers
+                                       question_text = q['question']
+                                       is_already_flashcard = any(card['question'] == question_text for card in st.session_state.flashcards)
+                                       
+                                       if not is_already_flashcard:
+                                           if st.button("Add to Flashcards", key=f"{mode_prefix}_add_flashcard_{question_index}"):
+                                               # Create flashcard from this question
+                                               create_flashcard(
+                                                   question=question_text,
+                                                   correct_answer=last_feedback['correct_answer'],
+                                                   user_answer=last_feedback['user_answer'],
+                                                   explanation=last_feedback['evaluation'],
+                                                   topic=question_state.get('topic'),
+                                                   subject=st.session_state.selected_subject
+                                               )
+                                               st.success("Added to flashcards! This will help you remember it next time.")
+                                       else:
+                                           st.caption("Already in your flashcards")
+                               else: # Open question - use info box for qualitative feedback
+                                   st.info(f"{last_feedback['evaluation']}", icon="📝")
+
+                               
+
                            else:
-                               st.write("_(No answer submitted or feedback generated for this question)_")
+                                st.write("_(No answer submitted or feedback generated for this question)_")
                            st.divider()
         else:
              st.warning("No questions were attempted in this session.")
@@ -2190,5 +2289,39 @@ def next_card():
         st.session_state.current_flashcard_index += 1
         st.session_state.show_answer = False
 
+
+
+
+THREE_BLUE_ONE_BROWN_LINKS = {
+    "Linear Algebra": {
+        "Solving Systems of Linear Equations":[
+            "https://youtu.be/uQhTuRlWMxw?si=0tuZJqmaJtIzUg7K",
+            "https://youtu.be/k7RM-ot2NWY?si=N69KlqfHeZdWVl37"
+        ], # Or a list: ["URL1", "URL2"]
+        "Matrix Operations": [
+            "https://youtu.be/XkY2DOUCWMU?si=-v-msUQ2o5S7dEvO",
+            "https://youtu.be/kYB8IZa5AuE?si=6Il2f4RAQ530kNfB"
+        ], # Example with multiple relevant videos
+        "Vector Spaces": [
+            "https://youtu.be/TgKwz5Ikpc8?si=TElR_OMp62B_WpS0",
+            "https://youtu.be/fNk_zzaMoSs?si=2hipRBHDUVoGgoiZ"
+        ],
+        "Eigenvalues and Eigenvectors": [
+            "https://youtu.be/PFDu9oVAE-g?si=ugRmSFyUrhyR0W-d",
+            "https://youtu.be/e50Bj7jn9IQ?si=X4I8Q4m_lIIB-q1X"
+        ]
+        
+    }
+    # If you add other subjects later, you can extend this dictionary:
+    # "Calculus": { ... }
+}
+
+
+
+
+
 if __name__ == "__main__":
     main()
+
+
+
