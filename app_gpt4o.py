@@ -1607,6 +1607,13 @@ def main():
     if st.sidebar.button(flashcard_label, use_container_width=True, key="view_flashcards_btn"):
         st.session_state.app_state = 'flashcards'
         st.rerun()
+
+    # --- Desmos Calculator Button ---
+    st.sidebar.divider()
+    st.sidebar.subheader("Tools")
+    if st.sidebar.button("Desmos Calculator", key="open_desmos_calc_btn", use_container_width=True):
+        st.session_state.app_state = 'desmos_calculator_view'
+        st.rerun()
     # --- End of Sidebar Logic ---
 
     # --- Main Area Content based on App State ---
@@ -2021,6 +2028,57 @@ def main():
                 if 'show_answer' in st.session_state: del st.session_state['show_answer']
                 if 'show_create_flashcard_form' in st.session_state: del st.session_state['show_create_flashcard_form']
                 st.rerun()
+
+    # --- Desmos Calculator View State ---
+    elif st.session_state.app_state == 'desmos_calculator_view':
+        st.header("Desmos Graphing Calculator")
+
+        # HTML to embed Desmos
+        # Using the demo API key. For production, obtain your own.
+        # Changed div id to 'calculator_embed' for specificity
+        desmos_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Desmos Calculator</title>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <script src="https://www.desmos.com/api/v1.10/calculator.js?apiKey=dcb31709b452b1cf9dc26972add0fda6"></script>
+            <style>
+                html, body {{
+                    margin: 0;
+                    padding: 0;
+                    height: 100%;
+                    width: 100%;
+                    overflow: hidden; /* Prevent scrollbars on html/body if component is sized correctly */
+                }}
+                #calculator_embed {{
+                    width: 100%;
+                    height: 100%;
+                    border: none; /* Remove any potential border if Streamlit adds one */
+                }}
+            </style>
+        </head>
+        <body>
+            <div id="calculator_embed"></div>
+            <script type="text/javascript">
+                var elt = document.getElementById('calculator_embed');
+                if (elt) {{ // Check if element exists
+                    var calculator = Desmos.GraphingCalculator(elt);
+                    // calculator.setExpression({{ id: 'graph_default', latex: 'y=x^2' }});
+                }} else {{
+                    console.error("Desmos container 'calculator_embed' not found.");
+                }}
+            </script>
+        </body>
+        </html>
+        """
+        # Embed the HTML. Height is crucial for st.components.v1.html
+        st.components.v1.html(desmos_html, height=600, scrolling=False)
+
+        if st.button("Close Calculator", key="close_desmos_calc"):
+            st.session_state.app_state = 'welcome'
+            st.rerun()
 
     # Fallback State
     else:
