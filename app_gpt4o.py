@@ -8,6 +8,9 @@ import time
 import random # Needed for shuffling options if desired
 import base64 # Needed for image encoding
 import datetime # Needed for spaced repetition scheduling
+from sympy import symbols, Eq, solve, sympify, Matrix
+from sympy.parsing.sympy_parser import parse_expr
+import sympy as sp
 
 # --- Page Config MUST be the first Streamlit command ---
 st.set_page_config(layout="wide")
@@ -278,6 +281,247 @@ def extract_json_from_response(response_data):
     return None
 
 
+def verify_question_mathematically(question_data, topic):
+    """
+    Mathematically verify questions using SymPy calculations.
+    Currently supports: 'Solving Systems of Linear Equations'
+    Returns: (is_valid, error_message)
+    """
+    if topic != "Solving Systems of Linear Equations":
+        return True, None  # Skip verification for other topics for now
+    
+    question_text = question_data.get('question', '')
+    correct_answer = question_data.get('correct', '')
+    options = question_data.get('options', [])
+    
+    try:
+        # Extract equations from the question text
+        equations = _extract_equations_from_text(question_text)
+        
+        if len(equations) >= 2:
+            # We have equations to verify - use SymPy to solve them
+            x, y = symbols('x y')
+            sympy_equations = []
+            
+            # Convert text equations to SymPy equations
+            for eq_text in equations:
+                try:
+                    sympy_eq = _parse_equation_to_sympy(eq_text, x, y)
+                    if sympy_eq:
+                        sympy_equations.append(sympy_eq)
+                except:
+                    continue  # Skip equations we can't parse
+            
+            if len(sympy_equations) >= 2:
+                # Solve the system using SymPy
+                try:
+                    solution = solve(sympy_equations, (x, y))
+                    
+                    # Analyze the solution type
+                    if solution == []:
+                        # No solution (inconsistent system)
+                        expected_answer_type = "no solution"
+                    elif len(solution) == 1 and isinstance(solution, dict):
+                        # Unique solution
+                        expected_answer_type = "unique solution"
+                        expected_values = solution
+                    elif solution == True or (isinstance(solution, list) and len(solution) > 1):
+                        # Infinitely many solutions
+                        expected_answer_type = "infinitely many"
+                    else:
+                        # Unique solution in different format
+                        expected_answer_type = "unique solution"
+                        expected_values = solution
+                    
+                    # Verify the correct answer matches our calculation
+                    return _verify_answer_against_calculation(
+                        correct_answer, expected_answer_type, 
+                        expected_values if 'expected_values' in locals() else None
+                    )
+                    
+                except Exception as solve_error:
+                    # If SymPy can't solve, do basic consistency checks
+                    return _basic_equation_consistency_check(sympy_equations, correct_answer)
+        
+        # If we can't extract equations, fall back to basic checks
+        return _basic_text_verification(question_text, correct_answer, options)
+        
+    except Exception as e:
+        # If verification fails, allow the question through with a warning
+        return True, f"Verification skipped due to error: {str(e)}"
+
+def _extract_equations_from_text(text):
+    """Extract linear equations from question text using regex"""
+    import re
+    # Look for patterns like "2x + 3y = 5", "x - y = 1", etc.
+    # More comprehensive regex to catch various equation formats
+    equation_patterns = [
+        r'[+-]?\s*\d*\s*[xy]\s*[+-]\s*\d*\s*[xy]\s*=\s*[+-]?\s*\d+',  # 2x + 3y = 5
+        r'[xy]\s*[+-]\s*[xy]\s*=\s*[+-]?\s*\d+',  # x + y = 2
+        r'[+-]?\s*\d+\s*[xy]\s*[+-]\s*\d+\s*[xy]\s*=\s*[+-]?\s*\d+',  # 2x + 3y = 5
+        r'[xy]\s*=\s*[+-]?\s*\d+',  # x = 5
+    ]
+    
+    equations = []
+    for pattern in equation_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        equations.extend(matches)
+    
+    # Clean up equations (remove extra spaces)
+    cleaned_equations = []
+    for eq in equations:
+        cleaned = re.sub(r'\s+', '', eq)  # Remove all spaces
+        if '=' in cleaned and len(cleaned) > 3:  # Basic validation
+            cleaned_equations.append(cleaned)
+    
+    return cleaned_equations
+
+def _parse_equation_to_sympy(eq_text, x, y):
+    """Convert a text equation like '2x+3y=5' to a SymPy equation"""
+    try:
+        # Split on equals sign
+        if '=' not in eq_text:
+            return None
+            
+        left_str, right_str = eq_text.split('=')
+        
+        # Parse both sides using SymPy
+        left_expr = parse_expr(left_str, transformations='all')
+        right_expr = parse_expr(right_str, transformations='all')
+        
+        # Create equation
+        equation = Eq(left_expr, right_expr)
+        return equation
+        
+    except Exception as e:
+        print(f"Error parsing equation '{eq_text}': {e}")
+        return None
+
+def _verify_answer_against_calculation(correct_answer, expected_type, expected_values=None):
+    """Verify if the correct answer matches our SymPy calculation"""
+    correct_lower = correct_answer.lower()
+    
+    if expected_type == "no solution":
+        if "no solution" in correct_lower or "inconsistent" in correct_lower:
+            return True, None
+        else:
+            return False, f"SymPy calculation shows no solution, but answer is '{correct_answer}'"
+    
+    elif expected_type == "infinitely many":
+        if "infinitely many" in correct_lower or "infinite" in correct_lower or "dependent" in correct_lower:
+            return True, None
+        else:
+            return False, f"SymPy calculation shows infinitely many solutions, but answer is '{correct_answer}'"
+    
+    elif expected_type == "unique solution" and expected_values:
+        # Check if the answer contains the calculated values
+        try:
+            if isinstance(expected_values, dict):
+                x_val = expected_values.get(symbols('x'))
+                y_val = expected_values.get(symbols('y'))
+                
+                # Look for these values in the correct answer
+                if x_val is not None and y_val is not None:
+                    x_str = str(x_val)
+                    y_str = str(y_val)
+                    
+                    # Check various formats: (x,y), x=a y=b, etc.
+                    if (x_str in correct_answer and y_str in correct_answer) or \
+                       f"({x_str},{y_str})" in correct_answer.replace(" ", "") or \
+                       f"({x_str}, {y_str})" in correct_answer:
+                        return True, None
+                    else:
+                        return False, f"SymPy calculated solution x={x_val}, y={y_val}, but answer is '{correct_answer}'"
+        except:
+            pass
+        
+        # If we can't verify exact values, just check it's not "no solution" or "infinitely many"
+        if "no solution" not in correct_lower and "infinitely many" not in correct_lower:
+            return True, None
+    
+    # Default: allow through if we can't definitively verify
+    return True, None
+
+def _basic_equation_consistency_check(sympy_equations, correct_answer):
+    """Basic consistency check when SymPy solve fails"""
+    try:
+        # Check if equations are obviously contradictory
+        # Convert to matrix form if possible
+        x, y = symbols('x y')
+        
+        # Try to extract coefficients
+        coeffs = []
+        constants = []
+        
+        for eq in sympy_equations:
+            try:
+                # Get coefficients of x and y
+                x_coeff = eq.lhs.coeff(x, 1) or 0
+                y_coeff = eq.lhs.coeff(y, 1) or 0
+                constant = eq.rhs
+                
+                coeffs.append([x_coeff, y_coeff])
+                constants.append(constant)
+            except:
+                continue
+        
+        if len(coeffs) >= 2:
+            # Check for obvious contradictions
+            A = Matrix(coeffs)
+            b = Matrix(constants)
+            
+            # If coefficient matrix has rank < 2 but augmented matrix has rank 2, inconsistent
+            try:
+                rank_A = A.rank()
+                Ab = A.row_join(b)
+                rank_Ab = Ab.rank()
+                
+                if rank_A < rank_Ab:
+                    # Inconsistent system
+                    if "no solution" in correct_answer.lower():
+                        return True, None
+                    else:
+                        return False, "System appears inconsistent but answer doesn't indicate no solution"
+            except:
+                pass
+    
+    except Exception:
+        pass
+    
+    # If we can't determine, allow through
+    return True, None
+
+def _basic_text_verification(question_text, correct_answer, options):
+    """Fallback verification when we can't extract/solve equations"""
+    # Basic sanity checks
+    correct_lower = correct_answer.lower()
+    question_lower = question_text.lower()
+    
+    # Check for obvious mismatches
+    if "no solution" in question_lower and "no solution" not in correct_lower and "inconsistent" not in correct_lower:
+        return False, "Question mentions 'no solution' but answer doesn't match"
+    
+    if ("infinitely many" in question_lower or "infinite" in question_lower) and \
+       "infinitely many" not in correct_lower and "infinite" not in correct_lower:
+        return False, "Question mentions infinite solutions but answer doesn't match"
+    
+    # Check that all options are reasonable
+    reasonable_phrases = [
+        'no solution', 'infinitely many', 'unique solution', 'one solution',
+        'inconsistent', 'dependent', 'independent', 'x =', 'y =', '(', ')'
+    ]
+    
+    for option in options:
+        option_lower = option.lower()
+        if not any(phrase in option_lower for phrase in reasonable_phrases):
+            # Check for coordinate patterns
+            import re
+            if not re.search(r'\(\s*-?\d+\s*,\s*-?\d+\s*\)', option) and \
+               not re.search(r'[xy]\s*=\s*-?\d+', option):
+                return False, f"Option '{option}' doesn't appear to be a valid linear system answer"
+    
+    return True, None
+
 def generate_questions(topic, num_questions=2, difficulty_level=None):
     """Generates topic-specific math questions using the AI model (for Diag/Practice), optionally tailored to a difficulty level."""
     difficulty_prompt_segment = ""
@@ -391,14 +635,26 @@ Ensure questions align with and test understanding of these objectives.
         else:
              st.warning(f"AI generated question {i+1} has invalid format or answer. Discarding.", icon="⚠️")
 
-    # Ensure we return the requested number, using fallbacks if needed
-    if len(valid_questions) < num_questions:
-        st.warning(f"Model generated only {len(valid_questions)} valid questions. Using fallback questions for the remainder.", icon="⚠️")
-        needed = num_questions - len(valid_questions)
-        valid_fallbacks = [fb for fb in FALLBACK_QUESTIONS if fb['correct'] in fb['options']]
-        valid_questions.extend(valid_fallbacks[:needed])
+    # --- NEW: Mathematical Verification ---
+    mathematically_verified_questions = []
+    for i, q in enumerate(valid_questions):
+        is_math_valid, math_error = verify_question_mathematically(q, topic)
+        if is_math_valid:
+            mathematically_verified_questions.append(q)
+        else:
+            st.warning(f"Question {i+1} failed mathematical verification: {math_error}. Discarding.", icon="🔍")
+    
+    # Update the final questions to use mathematically verified questions
+    final_questions = mathematically_verified_questions
 
-    return valid_questions[:num_questions] # Return exactly the number requested
+    # Ensure we return the requested number, using fallbacks if needed
+    if len(final_questions) < num_questions:
+        st.warning(f"After verification, only {len(final_questions)} valid questions remain. Using fallback questions for the remainder.", icon="⚠️")
+        needed = num_questions - len(final_questions)
+        valid_fallbacks = [fb for fb in FALLBACK_QUESTIONS if fb['correct'] in fb['options']]
+        final_questions.extend(valid_fallbacks[:needed])
+
+    return final_questions[:num_questions] # Return exactly the number requested
 
 
 # --- Feedback, Help, Solution Functions ---
@@ -977,7 +1233,7 @@ def run_mode(mode_key):
             st.info(f"Level: **{simple_level}**") 
 
         # Cleaner slider with direct label
-        num_questions = st.slider("Number of questions", min_value=1, max_value=4, value=mode_state.get("num_questions_selected", 2), key=f"{mode_prefix}_num_q")
+        num_questions = st.slider("Number of questions", min_value=1, max_value=25, value=mode_state.get("num_questions_selected", 2), key=f"{mode_prefix}_num_q")
         mode_state["num_questions_selected"] = num_questions
         
         # Start button with more whitespace
@@ -1095,18 +1351,18 @@ def run_mode(mode_key):
                                        st.info(f"Correct Answer: **{fb['correct_answer']}**", icon="💡")
                                        
                                        # Add flashcard option for incorrect MCQ answers
-                                       question_text = q['question']
+                                       question_text = q_data.get('question', 'N/A')
                                        is_already_flashcard = any(card['question'] == question_text for card in st.session_state.flashcards)
                                        
                                        if not is_already_flashcard:
-                                           if st.button("Add to Flashcards", key=f"{mode_prefix}_add_flashcard_{question_index}"):
+                                           if st.button("Add to Flashcards", key=f"{mode_prefix}_add_flashcard_{i}"):
                                                # Create flashcard from this question
                                                create_flashcard(
                                                    question=question_text,
-                                                   correct_answer=last_feedback['correct_answer'],
-                                                   user_answer=last_feedback['user_answer'],
-                                                   explanation=last_feedback['evaluation'],
-                                                   topic=question_state.get('topic'),
+                                                   correct_answer=fb['correct_answer'],
+                                                   user_answer=fb['user_answer'],
+                                                   explanation=fb['evaluation'],
+                                                   topic=mode_state.get('topic'),
                                                    subject=st.session_state.selected_subject
                                                )
                                                st.success("Added to flashcards! This will help you remember it next time.")
