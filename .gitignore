@@ -42,3 +42,15 @@ env/
 *test_openai*
 .DS_Store
 *commands.txt*
+
+# Survey data files
+AI Tutor Pre-Survey.csv
+Post AI Tutor Demo Survey.csv
+*survey*.csv
+*Survey*.csv
+
+# Experiment files
+accuracy_experiment.py
+accuracy_experiment_results.json
+*experiment*.py
+*experiment*.json

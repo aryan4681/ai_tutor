@@ -1233,7 +1233,7 @@ def run_mode(mode_key):
             st.info(f"Level: **{simple_level}**") 
 
         # Cleaner slider with direct label
-        num_questions = st.slider("Number of questions", min_value=1, max_value=25, value=mode_state.get("num_questions_selected", 2), key=f"{mode_prefix}_num_q")
+        num_questions = st.slider("Number of questions", min_value=1, max_value=4, value=mode_state.get("num_questions_selected", 2), key=f"{mode_prefix}_num_q")
         mode_state["num_questions_selected"] = num_questions
         
         # Start button with more whitespace
