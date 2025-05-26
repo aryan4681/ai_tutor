@@ -493,11 +493,11 @@ def _basic_equation_consistency_check(sympy_equations, correct_answer):
 
 def _basic_text_verification(question_text, correct_answer, options):
     """Fallback verification when we can't extract/solve equations"""
-    # Basic sanity checks
+    # Basic sanity checks - ONLY check the correct answer, not all options
     correct_lower = correct_answer.lower()
     question_lower = question_text.lower()
     
-    # Check for obvious mismatches
+    # Check for obvious mismatches between question and correct answer
     if "no solution" in question_lower and "no solution" not in correct_lower and "inconsistent" not in correct_lower:
         return False, "Question mentions 'no solution' but answer doesn't match"
     
@@ -505,22 +505,61 @@ def _basic_text_verification(question_text, correct_answer, options):
        "infinitely many" not in correct_lower and "infinite" not in correct_lower:
         return False, "Question mentions infinite solutions but answer doesn't match"
     
-    # Check that all options are reasonable
+    # Check that the CORRECT ANSWER is reasonable (ignore distractor options)
     reasonable_phrases = [
         'no solution', 'infinitely many', 'unique solution', 'one solution',
         'inconsistent', 'dependent', 'independent', 'x =', 'y =', '(', ')'
     ]
     
-    for option in options:
-        option_lower = option.lower()
-        if not any(phrase in option_lower for phrase in reasonable_phrases):
-            # Check for coordinate patterns
-            import re
-            if not re.search(r'\(\s*-?\d+\s*,\s*-?\d+\s*\)', option) and \
-               not re.search(r'[xy]\s*=\s*-?\d+', option):
-                return False, f"Option '{option}' doesn't appear to be a valid linear system answer"
+    # Only validate the correct answer, not all options
+    if not any(phrase in correct_lower for phrase in reasonable_phrases):
+        # Check for coordinate patterns in the correct answer
+        import re
+        if not re.search(r'\(\s*-?\d+\s*,\s*-?\d+\s*\)', correct_answer) and \
+           not re.search(r'[xy]\s*=\s*-?\d+', correct_answer):
+            return False, f"Correct answer '{correct_answer}' doesn't appear to be a valid linear system answer"
     
     return True, None
+
+def self_reflect_on_question(question_data, topic):
+    """
+    Minimal self-reflection: AI reviews its own generated question.
+    Returns: (is_valid, error_message)
+    """
+    reflection_prompt = f"""Review this math question you just generated:
+
+Question: {question_data['question']}
+Options: {question_data['options']}
+Your marked correct answer: {question_data['correct']}
+
+Check for:
+1. Mathematical accuracy of the question setup
+2. Correctness of your marked answer
+3. Clarity and appropriateness for {topic}
+
+Respond with exactly:
+- "VALID" if the question is mathematically sound and appropriate
+- "INVALID: [brief reason]" if there are issues
+
+Be critical but fair."""
+    
+    system_msg = "You are a mathematical reviewer checking your own work for errors. Be thorough but concise."
+    response = query_openai_model(reflection_prompt, system_message=system_msg)
+    
+    if "error" in response:
+        # If API fails, allow question through (don't block on reflection failure)
+        return True, "Self-reflection API call failed"
+    
+    response_text = response.get("generated_text", "").strip()
+    
+    if response_text.startswith("INVALID"):
+        reason = response_text.replace("INVALID:", "").strip()
+        return False, reason
+    elif response_text.startswith("VALID"):
+        return True, None
+    else:
+        # If unclear response, err on side of caution but don't block
+        return True, f"Unclear self-reflection response: {response_text[:50]}..."
 
 def generate_questions(topic, num_questions=2, difficulty_level=None):
     """Generates topic-specific math questions using the AI model (for Diag/Practice), optionally tailored to a difficulty level."""
@@ -635,9 +674,20 @@ Ensure questions align with and test understanding of these objectives.
         else:
              st.warning(f"AI generated question {i+1} has invalid format or answer. Discarding.", icon="⚠️")
 
-    # --- NEW: Mathematical Verification ---
-    mathematically_verified_questions = []
+    # --- NEW: Self-Reflection Step ---
+    self_reflected_questions = []
     for i, q in enumerate(valid_questions):
+        is_self_valid, reflection_error = self_reflect_on_question(q, topic)
+        if is_self_valid:
+            self_reflected_questions.append(q)
+            if reflection_error:  # Valid but with a note
+                st.info(f"Question {i+1} self-reflection note: {reflection_error}", icon="ℹ️")
+        else:
+            st.warning(f"AI self-reflection rejected question {i+1}: {reflection_error}", icon="🤔")
+
+    # --- Mathematical Verification ---
+    mathematically_verified_questions = []
+    for i, q in enumerate(self_reflected_questions):
         is_math_valid, math_error = verify_question_mathematically(q, topic)
         if is_math_valid:
             mathematically_verified_questions.append(q)
@@ -2629,6 +2679,194 @@ THREE_BLUE_ONE_BROWN_LINKS = {
     # If you add other subjects later, you can extend this dictionary:
     # "Calculus": { ... }
 }
+
+# --- TEMPORARY TEST FUNCTION ---
+def test_linear_equations_verification():
+    """
+    Temporary function to test the mathematical verification of generated questions
+    for "Solving Systems of Linear Equations" topic.
+    
+    This function generates questions directly via AI (no fallbacks) and tests verification.
+    """
+    print("\n" + "="*60)
+    print("TESTING MATHEMATICAL VERIFICATION FOR LINEAR EQUATIONS")
+    print("="*60)
+    
+    if not openai_client:
+        print("ERROR: OpenAI client not available. Cannot generate questions for testing.")
+        return
+    
+    topic = "Solving Systems of Linear Equations"
+    num_questions = 5  # Total questions to test
+    
+    total_ai_generated = 0
+    total_verified = 0
+    verification_results = []
+    
+    print(f"Generating {num_questions} questions...")
+    print("-" * 40)
+    
+    # Generate all questions at once
+    try:
+        ai_questions = generate_ai_questions_only(topic, num_questions)
+        total_ai_generated = len(ai_questions)
+        
+        print(f"AI Generated {total_ai_generated} questions (no fallbacks)")
+        
+        # Test each question's verification
+        for i, question in enumerate(ai_questions):
+            print(f"\nQuestion {i+1}:")
+            print(f"Q: {question.get('question', 'N/A')}")
+            print(f"Correct Answer: {question.get('correct', 'N/A')}")
+            
+            # Test mathematical verification
+            is_valid, error_msg = verify_question_mathematically(question, topic)
+            
+            verification_results.append({
+                'question_num': i + 1,
+                'question': question.get('question', 'N/A'),
+                'correct_answer': question.get('correct', 'N/A'),
+                'is_valid': is_valid,
+                'error_message': error_msg
+            })
+            
+            if is_valid:
+                total_verified += 1
+                print(f"✅ VERIFICATION: PASSED")
+                if error_msg:
+                    print(f"   Note: {error_msg}")
+            else:
+                print(f"❌ VERIFICATION: FAILED")
+                print(f"   Error: {error_msg}")
+                
+    except Exception as e:
+        print(f"ERROR generating questions: {e}")
+    
+    # Summary
+    print("\n" + "="*60)
+    print("VERIFICATION TEST SUMMARY")
+    print("="*60)
+    print(f"Total AI questions generated: {total_ai_generated}")
+    print(f"Total questions verified: {total_verified}")
+    
+    if total_ai_generated > 0:
+        success_rate = (total_verified / total_ai_generated) * 100
+        print(f"Verification success rate: {success_rate:.1f}%")
+    else:
+        print("No questions were generated for testing.")
+    
+    # Detailed breakdown
+    print(f"\nDetailed Results:")
+    print("-" * 40)
+    
+    failed_questions = [r for r in verification_results if not r['is_valid']]
+    if failed_questions:
+        print(f"\nFAILED VERIFICATIONS ({len(failed_questions)}):")
+        for result in failed_questions:
+            print(f"  Q{result['question_num']}: {result['error_message']}")
+    
+    passed_with_notes = [r for r in verification_results if r['is_valid'] and r['error_message']]
+    if passed_with_notes:
+        print(f"\nPASSED WITH NOTES ({len(passed_with_notes)}):")
+        for result in passed_with_notes:
+            print(f"  Q{result['question_num']}: {result['error_message']}")
+    
+    print("\n" + "="*60)
+    print("TEST COMPLETE")
+    print("="*60)
+    
+    return {
+        'total_generated': total_ai_generated,
+        'total_verified': total_verified,
+        'success_rate': (total_verified / total_ai_generated * 100) if total_ai_generated > 0 else 0,
+        'results': verification_results
+    }
+
+def generate_ai_questions_only(topic, num_questions=2, difficulty_level=None):
+    """
+    Generate questions using ONLY AI (no fallbacks) for testing purposes.
+    This bypasses all the fallback logic in the main generate_questions function.
+    """
+    difficulty_prompt_segment = ""
+    if difficulty_level and difficulty_level in ["Beginner - Needs foundational review", "Intermediate - Good grasp, needs practice", "Advanced - Strong understanding"]:
+         simple_level = difficulty_level.split(" - ")[0]
+         difficulty_prompt_segment = f"The student is likely at a {simple_level} level. Please tailor the question difficulty appropriately. "
+    
+    # Add topic consistency guidelines if available
+    consistency_guidelines = ""
+    if topic in TOPIC_FACTS:
+        facts = TOPIC_FACTS[topic]
+        facts_text = "\n".join([f"- {fact}" for fact in facts])
+        consistency_guidelines = f"""
+IMPORTANT: Ensure all questions are consistent with these established facts about {topic}:
+{facts_text}
+
+If generating multiple questions on the same concept, ensure they don't contradict each other.
+"""
+
+    prompt = (
+        f"Generate {num_questions} distinct multiple-choice questions about '{topic}'. "
+        f"{difficulty_prompt_segment}"
+        f"Each question must have exactly four options. Clearly indicate the single correct answer. "
+        f"{consistency_guidelines}"
+        f"\n\nIMPORTANT: Each question MUST contain actual systems of linear equations with specific numbers (like '2x + 3y = 5 and 4x + 6y = 10'). "
+        f"Do NOT generate conceptual questions about linear systems theory. "
+        f"Focus on questions where students need to determine the solution type (unique solution, infinitely many solutions, or no solution) "
+        f"by analyzing the given system of equations. "
+        f"Examples of good questions: "
+        f"- 'Consider the system: 2x + 3y = 6 and 4x + 6y = 12. What type of solution does this system have?' "
+        f"- 'Solve the system: x + y = 3 and 2x - y = 0. What is the solution?' "
+        f"- 'Given the system: x + 2y = 5 and x + 2y = 7. What can be concluded about this system?' "
+    )
+    
+    # Add ILOs to prompt if available for the topic
+    if topic in TOPIC_ILOS:
+        ilos = TOPIC_ILOS[topic]
+        ilos_text = "\n".join([f"- {ilo}" for ilo in ilos])
+        prompt += f"""
+Consider the following Intended Learning Outcomes (ILOs) when generating questions for '{topic}':
+{ilos_text}
+Ensure questions align with and test understanding of these objectives.
+"""
+        
+    prompt += (
+        f"Return the result ONLY as a valid JSON list containing {num_questions} objects. "
+        f"Each object must have keys: 'question' (string), 'options' (list of 4 strings), and 'correct' (string - the correct option text). "
+        f"Ensure the 'correct' value exactly matches one of the strings in the 'options' list."
+        f"Do not include any introductory text, explanations, or markdown formatting like ```json."
+        f"Just output the raw JSON list."
+    )
+    system_msg = "You are an expert JSON generator and mathematics educator. Create JSON output according to the user's request precisely, ensuring mathematical accuracy."
+    model_response = query_openai_model(prompt, system_message=system_msg)
+
+    if "error" in model_response:
+        print(f"AI API Error: {model_response['error']}")
+        return []
+
+    generated_questions = extract_json_from_response(model_response)
+
+    if not generated_questions or not isinstance(generated_questions, list) or len(generated_questions) == 0:
+        print(f"Failed to parse valid questions from AI response.")
+        return []
+
+    # Basic validation only (no fallbacks)
+    valid_questions = []
+    for i, q in enumerate(generated_questions):
+        if (isinstance(q, dict) and
+            all(k in q for k in ['question', 'options', 'correct']) and
+            isinstance(q.get('question'), str) and
+            isinstance(q.get('options'), list) and len(q['options']) == 4 and
+            all(isinstance(opt, str) for opt in q['options']) and
+            isinstance(q.get('correct'), str) and
+            q['correct'] in q['options']):
+            valid_questions.append(q)
+        else:
+            print(f"AI generated question {i+1} has invalid format. Discarding.")
+
+    return valid_questions
+
+# Uncomment the line below to run the test when the script is executed directly
+# test_linear_equations_verification()
 
 
 
