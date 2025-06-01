@@ -2,6 +2,10 @@
 
 This repository contains the source code for an AI Math Tutor, developed as a thesis project. The system leverages OpenAI's GPT-4o model to provide a personalized and interactive learning experience for students, primarily focusing on mathematics.
 
+## Demo Link
+
+You can try the live demo [here](https://aitutordacs.streamlit.app/).
+
 ## Overview
 
 The AI Math Tutor aims to simulate a tutoring environment by offering various modes of interaction, including diagnostic tests, practice sessions, comprehensive exams, and on-demand help. It features adaptive feedback, question generation, and a gamified learning experience to engage students.
