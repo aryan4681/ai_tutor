@@ -804,22 +804,22 @@ def get_help(question, help_request, personality_name=DEFAULT_PERSONALITY):
         return "Sorry, I couldn't generate help at this time."
     return model_response["generated_text"]
 
-def get_step_by_step_solution(question, personality_name=DEFAULT_PERSONALITY):
-    """Gets a step-by-step solution for the question, adapting to personality."""
-    system_msg = AI_PERSONALITIES.get(personality_name, AI_PERSONALITIES[DEFAULT_PERSONALITY])
-    prompt = (
-        f"Provide a detailed, step-by-step explanation for why '{question['correct']}' is the correct answer to the following multiple-choice math question:\n"
-        f"Question: {question['question']}\n"
-        f"Options Provided: {question['options']}\n\n"
-        "Explain the concepts and calculations needed to arrive at the correct answer. "
-        "If relevant, briefly explain why other options might be incorrect (common mistakes)."
-        "Format the steps logically (e.g., using numbering or bullet points)."
-        "Adhere strictly to the persona defined in the system message."
-    )
-    model_response = query_openai_model(prompt, system_message=system_msg) # Pass dynamic system_msg
-    if "error" in model_response or not model_response.get("generated_text"):
-        return "Sorry, I couldn't generate a step-by-step solution at this time."
-    return model_response["generated_text"]
+# def get_step_by_step_solution(question, personality_name=DEFAULT_PERSONALITY):
+#     """Gets a step-by-step solution for the question, adapting to personality."""
+#     system_msg = AI_PERSONALITIES.get(personality_name, AI_PERSONALITIES[DEFAULT_PERSONALITY])
+#     prompt = (
+#         f"Provide a detailed, step-by-step explanation for why '{question['correct']}' is the correct answer to the following multiple-choice math question:\n"
+#         f"Question: {question['question']}\n"
+#         f"Options Provided: {question['options']}\n\n"
+#         "Explain the concepts and calculations needed to arrive at the correct answer. "
+#         "If relevant, briefly explain why other options might be incorrect (common mistakes)."
+#         "Format the steps logically (e.g., using numbering or bullet points)."
+#         "Adhere strictly to the persona defined in the system message."
+#     )
+#     model_response = query_openai_model(prompt, system_message=system_msg) # Pass dynamic system_msg
+#     if "error" in model_response or not model_response.get("generated_text"):
+#         return "Sorry, I couldn't generate a step-by-step solution at this time."
+#     return model_response["generated_text"]
 
 # --- UI Function for Displaying a Single Question ---
 def display_question_ui(question_state, question_obj, question_index, mode_prefix):
@@ -1419,7 +1419,7 @@ def run_mode(mode_key):
                                        else:
                                            st.caption("Already in your flashcards")
                                else: # Open question - use info box for qualitative feedback
-                                   st.info(f"{last_feedback['evaluation']}", icon="📝")
+                                   st.info(f"{fb['evaluation']}", icon="📝")
 
                                
 
@@ -2680,74 +2680,126 @@ THREE_BLUE_ONE_BROWN_LINKS = {
     # "Calculus": { ... }
 }
 
-# --- TEMPORARY TEST FUNCTION ---
-def test_linear_equations_verification():
+
+
+# --- TEMPORARY TEST FUNCTION WITH BATCHING (FOR 100 QUESTIONS ONLY) ---
+def test_linear_equations_verification_batched():
     """
-    Temporary function to test the mathematical verification of generated questions
-    for "Solving Systems of Linear Equations" topic.
+    TEMPORARY FUNCTION - ONLY FOR TESTING 100 QUESTIONS WITH BATCHING
     
-    This function generates questions directly via AI (no fallbacks) and tests verification.
+    This function generates a large number of questions using batching to avoid
+    token limits and API timeouts. It includes diversity mechanisms to ensure
+    variety across batches.
+    
+    DO NOT USE THIS IN PRODUCTION - This is purely for testing the verification system.
     """
-    print("\n" + "="*60)
-    print("TESTING MATHEMATICAL VERIFICATION FOR LINEAR EQUATIONS")
-    print("="*60)
+    print("\n" + "="*70)
+    print("TESTING MATHEMATICAL VERIFICATION - BATCHED VERSION (100 QUESTIONS)")
+    print("="*70)
     
     if not openai_client:
         print("ERROR: OpenAI client not available. Cannot generate questions for testing.")
         return
     
     topic = "Solving Systems of Linear Equations"
-    num_questions = 5  # Total questions to test
+    total_questions_desired = 100  # Total questions to test
+    batch_size = 5  # Generate in small batches to avoid token limits
     
     total_ai_generated = 0
     total_verified = 0
     verification_results = []
+    all_generated_questions = []
     
-    print(f"Generating {num_questions} questions...")
-    print("-" * 40)
+    # Diversity seeds to ensure variety across batches
+    batch_seeds = [
+        "Focus on systems with small integer coefficients (1-3) and unique solutions",
+        "Include systems with larger coefficients (4-10) and mixed positive/negative signs", 
+        "Focus on inconsistent systems that have no solution",
+        "Focus on dependent systems that have infinitely many solutions",
+        "Include systems with fractional coefficients like 1/2, 2/3, etc.",
+        "Mix different variable arrangements and equation orders",
+        "Include systems where one equation is a multiple of another",
+        "Focus on systems with zero coefficients in some terms",
+        "Include systems with decimal coefficients",
+        "Mix systems with different solution types randomly"
+    ]
     
-    # Generate all questions at once
-    try:
-        ai_questions = generate_ai_questions_only(topic, num_questions)
-        total_ai_generated = len(ai_questions)
+    print(f"Generating {total_questions_desired} questions in batches of {batch_size}...")
+    print(f"Using {len(batch_seeds)} different diversity seeds")
+    print("-" * 50)
+    
+    # Generate questions in batches
+    for batch_num in range(0, total_questions_desired, batch_size):
+        remaining = min(batch_size, total_questions_desired - batch_num)
+        batch_index = batch_num // batch_size
         
-        print(f"AI Generated {total_ai_generated} questions (no fallbacks)")
+        # Use different seed for each batch to ensure variety
+        seed_prompt = batch_seeds[batch_index % len(batch_seeds)]
         
-        # Test each question's verification
-        for i, question in enumerate(ai_questions):
-            print(f"\nQuestion {i+1}:")
-            print(f"Q: {question.get('question', 'N/A')}")
-            print(f"Correct Answer: {question.get('correct', 'N/A')}")
+        # Add diversity based on what we've generated so far
+        diversity_prompt = f"\nVARIETY INSTRUCTION: {seed_prompt}\n"
+        if len(all_generated_questions) > 10:
+            diversity_prompt += "IMPORTANT: Make these questions significantly different from previous ones in coefficients, solution types, and equation structures. Avoid repetitive patterns.\n"
+        
+        print(f"\nBatch {batch_index + 1}/{(total_questions_desired + batch_size - 1) // batch_size}: Generating {remaining} questions...")
+        print(f"Diversity focus: {seed_prompt}")
+        
+        try:
+            # Generate questions for this batch with diversity prompt
+            ai_questions = generate_ai_questions_only_with_diversity(topic, remaining, diversity_prompt)
+            batch_generated = len(ai_questions)
             
-            # Test mathematical verification
-            is_valid, error_msg = verify_question_mathematically(question, topic)
+            # Filter out questions that are too similar to existing ones
+            unique_questions = []
+            for question in ai_questions:
+                if not is_question_too_similar(question, all_generated_questions):
+                    unique_questions.append(question)
+                    all_generated_questions.append(question)
+                else:
+                    print(f"  Skipping similar question: {question.get('question', 'N/A')[:60]}...")
             
-            verification_results.append({
-                'question_num': i + 1,
-                'question': question.get('question', 'N/A'),
-                'correct_answer': question.get('correct', 'N/A'),
-                'is_valid': is_valid,
-                'error_message': error_msg
-            })
+            total_ai_generated += len(unique_questions)
+            print(f"  Generated {batch_generated} questions, {len(unique_questions)} unique")
             
-            if is_valid:
-                total_verified += 1
-                print(f"✅ VERIFICATION: PASSED")
-                if error_msg:
-                    print(f"   Note: {error_msg}")
-            else:
-                print(f"❌ VERIFICATION: FAILED")
-                print(f"   Error: {error_msg}")
+            # Test each unique question's verification
+            for i, question in enumerate(unique_questions):
+                question_num = total_ai_generated - len(unique_questions) + i + 1
+                print(f"\nQuestion {question_num}:")
+                print(f"Q: {question.get('question', 'N/A')}")
+                print(f"Correct Answer: {question.get('correct', 'N/A')}")
                 
-    except Exception as e:
-        print(f"ERROR generating questions: {e}")
+                # Test mathematical verification
+                is_valid, error_msg = verify_question_mathematically(question, topic)
+                
+                verification_results.append({
+                    'question_num': question_num,
+                    'question': question.get('question', 'N/A'),
+                    'correct_answer': question.get('correct', 'N/A'),
+                    'is_valid': is_valid,
+                    'error_message': error_msg,
+                    'batch': batch_index + 1
+                })
+                
+                if is_valid:
+                    total_verified += 1
+                    print(f"✅ VERIFICATION: PASSED")
+                    if error_msg:
+                        print(f"   Note: {error_msg}")
+                else:
+                    print(f"❌ VERIFICATION: FAILED")
+                    print(f"   Error: {error_msg}")
+                    
+        except Exception as e:
+            print(f"ERROR generating batch {batch_index + 1}: {e}")
+            continue
     
     # Summary
-    print("\n" + "="*60)
-    print("VERIFICATION TEST SUMMARY")
-    print("="*60)
+    print("\n" + "="*70)
+    print("BATCHED VERIFICATION TEST SUMMARY")
+    print("="*70)
     print(f"Total AI questions generated: {total_ai_generated}")
     print(f"Total questions verified: {total_verified}")
+    print(f"Total batches processed: {(total_questions_desired + batch_size - 1) // batch_size}")
     
     if total_ai_generated > 0:
         success_rate = (total_verified / total_ai_generated) * 100
@@ -2757,40 +2809,53 @@ def test_linear_equations_verification():
     
     # Detailed breakdown
     print(f"\nDetailed Results:")
-    print("-" * 40)
+    print("-" * 50)
     
     failed_questions = [r for r in verification_results if not r['is_valid']]
     if failed_questions:
         print(f"\nFAILED VERIFICATIONS ({len(failed_questions)}):")
         for result in failed_questions:
-            print(f"  Q{result['question_num']}: {result['error_message']}")
+            print(f"  Q{result['question_num']} (Batch {result['batch']}): {result['error_message']}")
     
     passed_with_notes = [r for r in verification_results if r['is_valid'] and r['error_message']]
     if passed_with_notes:
         print(f"\nPASSED WITH NOTES ({len(passed_with_notes)}):")
         for result in passed_with_notes:
-            print(f"  Q{result['question_num']}: {result['error_message']}")
+            print(f"  Q{result['question_num']} (Batch {result['batch']}): {result['error_message']}")
     
-    print("\n" + "="*60)
-    print("TEST COMPLETE")
-    print("="*60)
+    # Batch-wise breakdown
+    print(f"\nBATCH BREAKDOWN:")
+    batch_stats = {}
+    for result in verification_results:
+        batch = result['batch']
+        if batch not in batch_stats:
+            batch_stats[batch] = {'total': 0, 'passed': 0}
+        batch_stats[batch]['total'] += 1
+        if result['is_valid']:
+            batch_stats[batch]['passed'] += 1
+    
+    for batch, stats in sorted(batch_stats.items()):
+        rate = (stats['passed'] / stats['total'] * 100) if stats['total'] > 0 else 0
+        print(f"  Batch {batch}: {stats['passed']}/{stats['total']} passed ({rate:.1f}%)")
+    
+    print("\n" + "="*70)
+    print("BATCHED TEST COMPLETE")
+    print("="*70)
     
     return {
         'total_generated': total_ai_generated,
         'total_verified': total_verified,
         'success_rate': (total_verified / total_ai_generated * 100) if total_ai_generated > 0 else 0,
-        'results': verification_results
+        'results': verification_results,
+        'batch_stats': batch_stats
     }
 
-def generate_ai_questions_only(topic, num_questions=2, difficulty_level=None):
+def generate_ai_questions_only_with_diversity(topic, num_questions=2, diversity_prompt=""):
     """
-    Generate questions using ONLY AI (no fallbacks) for testing purposes.
-    This bypasses all the fallback logic in the main generate_questions function.
+    TEMPORARY HELPER FUNCTION - Generate questions with diversity prompts for batching test.
+    This is a modified version of generate_ai_questions_only that accepts diversity prompts.
     """
     difficulty_prompt_segment = ""
-    if difficulty_level and difficulty_level in ["Beginner - Needs foundational review", "Intermediate - Good grasp, needs practice", "Advanced - Strong understanding"]:
-         simple_level = difficulty_level.split(" - ")[0]
-         difficulty_prompt_segment = f"The student is likely at a {simple_level} level. Please tailor the question difficulty appropriately. "
     
     # Add topic consistency guidelines if available
     consistency_guidelines = ""
@@ -2806,9 +2871,9 @@ If generating multiple questions on the same concept, ensure they don't contradi
 
     prompt = (
         f"Generate {num_questions} distinct multiple-choice questions about '{topic}'. "
-        f"{difficulty_prompt_segment}"
         f"Each question must have exactly four options. Clearly indicate the single correct answer. "
         f"{consistency_guidelines}"
+        f"{diversity_prompt}"  # Add the diversity prompt here
         f"\n\nIMPORTANT: Each question MUST contain actual systems of linear equations with specific numbers (like '2x + 3y = 5 and 4x + 6y = 10'). "
         f"Do NOT generate conceptual questions about linear systems theory. "
         f"Focus on questions where students need to determine the solution type (unique solution, infinitely many solutions, or no solution) "
@@ -2836,7 +2901,7 @@ Ensure questions align with and test understanding of these objectives.
         f"Do not include any introductory text, explanations, or markdown formatting like ```json."
         f"Just output the raw JSON list."
     )
-    system_msg = "You are an expert JSON generator and mathematics educator. Create JSON output according to the user's request precisely, ensuring mathematical accuracy."
+    system_msg = "You are an expert JSON generator and mathematics educator. Create JSON output according to the user's request precisely, ensuring mathematical accuracy and variety."
     model_response = query_openai_model(prompt, system_message=system_msg)
 
     if "error" in model_response:
@@ -2865,8 +2930,42 @@ Ensure questions align with and test understanding of these objectives.
 
     return valid_questions
 
-# Uncomment the line below to run the test when the script is executed directly
-# test_linear_equations_verification()
+def is_question_too_similar(new_question, existing_questions, similarity_threshold=0.6):
+    """
+    TEMPORARY HELPER FUNCTION - Check if a question is too similar to existing ones.
+    MODIFIED: Much less strict - only catches exact duplicates or very close matches.
+    Allows similar structures since linear systems naturally have similar formats.
+    """
+    new_text = new_question.get('question', '').lower().strip()
+    new_correct = new_question.get('correct', '').lower().strip()
+    
+    for existing in existing_questions:
+        existing_text = existing.get('question', '').lower().strip()
+        existing_correct = existing.get('correct', '').lower().strip()
+        
+        # Check for exact or near-exact duplicates
+        # 1. Exact text match
+        if new_text == existing_text:
+            return True
+            
+        # 2. Very high similarity (90%+ word overlap) - likely same question with minor wording changes
+        new_words = set(new_text.split())
+        existing_words = set(existing_text.split())
+        
+        if len(new_words) > 0 and len(existing_words) > 0:
+            text_similarity = len(new_words.intersection(existing_words)) / len(new_words.union(existing_words))
+            
+            # Only flag as duplicate if extremely similar (90%+ overlap)
+            if text_similarity > 0.9:
+                return True
+                
+            # 3. Same answer AND high text similarity (80%+) - likely same question with different wording
+            if new_correct == existing_correct and text_similarity > 0.8:
+                return True
+    
+    return False
+
+# --- TEMPORARY TEST FUNCTION ---
 
 
 
@@ -2874,6 +2973,9 @@ Ensure questions align with and test understanding of these objectives.
 
 if __name__ == "__main__":
     main()
+
+# Uncomment the line below to run the BATCHED test for 100 questions
+# test_linear_equations_verification_batched()
 
 
 
